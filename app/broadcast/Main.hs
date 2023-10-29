@@ -62,7 +62,13 @@ fromInit _ init chan =
             }
 
 randomSample :: (Ord a) => Int -> S.Set a -> IO (S.Set a)
-randomSample n s = S.fromList <$> replicateM n ((`S.elemAt` s) <$> randomRIO (0, S.size s - 1))
+randomSample k s = S.fromList <$> replicateM k ((`S.elemAt` s) <$> randomRIO (0, S.size s - 1))
+
+gossipOverhead :: Int
+gossipOverhead = 10 -- percent of values already known included in gossip message
+
+extraNeighbours :: Int
+extraNeighbours = 40 -- percent of other nodes to include as extra neighbours
 
 step :: Event Payload InjectedPayload -> StateT BroadcastNode IO ()
 step EOF = return ()
@@ -74,7 +80,7 @@ step (Injected IGossip) = do
   forM_ neighbours $ \n -> do
     let knowntoN = known' M.! n
         (alreadyKnown, notifyOf) = S.partition (`S.member` knowntoN) messages'
-        k = max 5 (S.size notifyOf `div` 10)
+        k = (gossipOverhead * S.size notifyOf) `div` 100
     extra <- liftIO $ randomSample k alreadyKnown
     let notifyOf' = notifyOf `S.union` extra
     putMessage
@@ -103,7 +109,7 @@ step (MessageEvent msg) =
         Topology topology -> do
           node <- use bNodeId
           known' <- use known
-          others <- liftIO $ randomSample (4 * M.size known' `div` 10) (M.keysSet known')
+          others <- liftIO $ randomSample ((extraNeighbours * M.size known') `div` 100) (M.keysSet known')
           assign neighbourhood (S.toList $ S.fromList (topology M.! node) `S.union` others)
           putMessage' bMsgId $ res & body . payload .~ TopologyOk
         BroadcastOk -> return ()
