@@ -18,5 +18,11 @@ broadcast-multi: compile
 broadcast-fault-tolerant: compile
 	$(maelstrom) test -w broadcast --bin $$(cabal list-bin broadcast) --node-count 5 --time-limit 20 --rate 10 --nemesis partition
 
+broadcast-efficiency-bench: compile
+	$(maelstrom) test -w broadcast --bin $$(cabal list-bin broadcast) --node-count 25 --time-limit 20 --rate 100 --latency 100
+
+broadcast-efficiency-test: compile
+	$(maelstrom) test -w broadcast --bin $$(cabal list-bin broadcast) --node-count 25 --time-limit 20 --rate 100 --latency 100 --nemesis partition
+
 web:
 	$(maelstrom) serve

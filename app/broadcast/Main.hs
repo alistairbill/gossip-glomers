@@ -43,7 +43,7 @@ data BroadcastNode = BroadcastNode
 makeLenses ''BroadcastNode
 
 gossipInterval :: Int
-gossipInterval = 300 * 1000 -- 300 ms
+gossipInterval = 200 * 1000 -- 200 ms
 
 fromInit :: () -> Init -> Chan (Event Payload InjectedPayload) -> IO BroadcastNode
 fromInit _ init chan =
@@ -74,7 +74,7 @@ step (Injected IGossip) = do
   forM_ neighbours $ \n -> do
     let knowntoN = known' M.! n
         (alreadyKnown, notifyOf) = S.partition (`S.member` knowntoN) messages'
-        k = 10 -- TODO: S.size notifyOf `div` 10 ?
+        k = max 5 (S.size notifyOf `div` 10)
     extra <- liftIO $ randomSample k alreadyKnown
     let notifyOf' = notifyOf `S.union` extra
     putMessage
@@ -102,7 +102,9 @@ step (MessageEvent msg) =
           putMessage' bMsgId $ res & body . payload .~ ReadOk messages'
         Topology topology -> do
           node <- use bNodeId
-          assign neighbourhood (topology M.! node)
+          known' <- use known
+          others <- liftIO $ randomSample (4 * M.size known' `div` 10) (M.keysSet known')
+          assign neighbourhood (S.toList $ S.fromList (topology M.! node) `S.union` others)
           putMessage' bMsgId $ res & body . payload .~ TopologyOk
         BroadcastOk -> return ()
         ReadOk _ -> return ()
