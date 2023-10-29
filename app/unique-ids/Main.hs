@@ -32,8 +32,8 @@ data UniqueNode = UniqueNode {
 }
 makeLenses ''UniqueNode
 
-fromInit :: () -> Init -> Chan (Event Payload ()) -> UniqueNode
-fromInit _ init _ = UniqueNode (init ^. nodeId) 1
+fromInit :: () -> Init -> Chan (Event Payload ()) -> IO UniqueNode
+fromInit _ init _ = return $ UniqueNode (init ^. nodeId) 1
 
 step :: Event Payload () -> StateT UniqueNode IO ()
 step (MessageEvent msg@(Message _ _ (Body _ _ Generate))) = do

@@ -1,9 +1,9 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Lib
@@ -15,6 +15,8 @@ module Lib
     putMessage,
     putMessage',
     body,
+    src,
+    dst,
     payload,
     reply,
     nodeId,
@@ -74,7 +76,7 @@ instance (ToJSON payload) => ToJSON (Body payload) where
 
 instance (FromJSON payload) => FromJSON (Body payload) where
   parseJSON = withObject "Body" $ \o -> do
-    _msgId <- o .: "msg_id"
+    _msgId <- o .:? "msg_id"
     _inReplyTo <- o .:? "in_reply_to"
     _payload <- parseJSON (Object o)
     return Body {..}
@@ -99,6 +101,8 @@ instance FromJSON Init where
 instance ToJSON InitOk where
   toJSON InitOk = object ["type" .= ("init_ok" :: Text)]
 
+data Event p ip = MessageEvent (Message p) | Injected ip | EOF
+
 reply :: Message payload -> Message payload
 reply msg =
   msg
@@ -119,8 +123,6 @@ putMessage' nodeMsgId msg = do
   putMessage $ msg & body . msgId ?~ i
   nodeMsgId += 1
 
-data Event p ip = MessageEvent (Message p) | Injected ip | EOF
-
 parseThread :: (FromJSON p) => Chan (Event p ip) -> IO ()
 parseThread chan = do
   eof <- isEOF
@@ -131,7 +133,7 @@ parseThread chan = do
       writeChan chan $ MessageEvent msg
       parseThread chan
 
-loop :: (FromJSON p) => (s -> Init -> Chan (Event p ip) -> a) -> (Event p ip -> StateT a IO ()) -> s -> IO ()
+loop :: (FromJSON p) => (s -> Init -> Chan (Event p ip) -> IO a) -> (Event p ip -> StateT a IO ()) -> s -> IO ()
 loop fromInit step initState = do
   hSetBuffering stdin NoBuffering
   hSetBuffering stdout NoBuffering
@@ -139,7 +141,8 @@ loop fromInit step initState = do
   putMessage $ reply initMsg & body . msgId ?~ 0 & body . payload .~ InitOk
   chan <- newChan
   forkIO $ parseThread chan
-  go chan $ fromInit initState (initMsg ^. body . payload) chan
+  initNode <- fromInit initState (initMsg ^. body . payload) chan
+  go chan initNode
   where
     go chan node = do
       input <- readChan chan

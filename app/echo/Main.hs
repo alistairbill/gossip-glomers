@@ -34,8 +34,8 @@ newtype EchoNode = EchoNode {
 }
 makeLenses ''EchoNode
 
-fromInit :: () -> Init -> Chan (Event Payload ()) -> EchoNode
-fromInit _ _ _ = EchoNode 1
+fromInit :: () -> Init -> Chan (Event Payload ()) -> IO EchoNode
+fromInit _ _ _ = return $ EchoNode 1
 
 step :: Event Payload () -> StateT EchoNode IO ()
 step (MessageEvent msg@(Message _ _ (Body _ _ (Echo e)))) = do

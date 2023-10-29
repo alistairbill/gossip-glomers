@@ -9,8 +9,11 @@ echo: compile
 unique-ids: compile
 	$(maelstrom) test -w unique-ids --bin $$(cabal list-bin unique-ids) --time-limit 30 --rate 1000 --node-count 3 --availability total --nemesis partition
 
-broadcast: compile
+broadcast-single: compile
 	$(maelstrom) test -w broadcast --bin $$(cabal list-bin broadcast) --node-count 1 --time-limit 20 --rate 10
+
+broadcast-multi: compile
+	$(maelstrom) test -w broadcast --bin $$(cabal list-bin broadcast) --node-count 5 --time-limit 20 --rate 10
 	
 web:
 	$(maelstrom) serve

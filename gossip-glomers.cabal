@@ -49,6 +49,7 @@ executable broadcast
         containers,
         lens,
         mtl,
+        random,
         text,
         gossip-glomers
     hs-source-dirs: app/broadcast
