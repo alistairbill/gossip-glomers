@@ -1,7 +1,5 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -21,6 +19,11 @@ module Lib
     reply,
     nodeId,
     nodeIds,
+    nodeMsgId,
+    initNodeId,
+    initNodeIds,
+    other,
+    Node,
   )
 where
 
@@ -82,8 +85,8 @@ instance (FromJSON payload) => FromJSON (Body payload) where
     return Body {..}
 
 data Init = Init
-  { _nodeId :: Text,
-    _nodeIds :: [Text]
+  { _initNodeId :: Text,
+    _initNodeIds :: [Text]
   }
   deriving (Show)
 
@@ -94,14 +97,18 @@ data InitOk = InitOk
 
 instance FromJSON Init where
   parseJSON = withObject "Init" $ \o -> do
-    _nodeId <- o .: "node_id"
-    _nodeIds <- o .: "node_ids"
+    _initNodeId <- o .: "node_id"
+    _initNodeIds <- o .: "node_ids"
     return Init {..}
 
 instance ToJSON InitOk where
   toJSON InitOk = object ["type" .= ("init_ok" :: Text)]
 
 data Event p ip = MessageEvent (Message p) | Injected ip | EOF
+
+data Node a = Node {_nodeId :: Text, _nodeIds :: [Text], _nodeMsgId :: Int, _other :: a}
+
+makeLenses ''Node
 
 reply :: Message payload -> Message payload
 reply msg =
@@ -117,8 +124,8 @@ putMessage :: (MonadIO m, ToJSON payload) => Message payload -> m ()
 putMessage msg = do
   liftIO . B.putStrLn . toStrict . encode $ msg
 
-putMessage' :: (MonadState a m, MonadIO m, ToJSON payload) => Lens' a Int -> Message payload -> m ()
-putMessage' nodeMsgId msg = do
+putMessage' :: (MonadState (Node a) m, MonadIO m, ToJSON payload) => Message payload -> m ()
+putMessage' msg = do
   i <- use nodeMsgId
   putMessage $ msg & body . msgId ?~ i
   nodeMsgId += 1
@@ -133,7 +140,7 @@ parseThread chan = do
       writeChan chan $ MessageEvent msg
       parseThread chan
 
-loop :: (FromJSON p) => (s -> Init -> Chan (Event p ip) -> IO a) -> (Event p ip -> StateT a IO ()) -> s -> IO ()
+loop :: (FromJSON p) => (s -> Init -> Chan (Event p ip) -> IO a) -> (Event p ip -> StateT (Node a) IO ()) -> s -> IO ()
 loop fromInit step initState = do
   hSetBuffering stdin NoBuffering
   hSetBuffering stdout NoBuffering
@@ -141,8 +148,16 @@ loop fromInit step initState = do
   putMessage $ reply initMsg & body . msgId ?~ 0 & body . payload .~ InitOk
   chan <- newChan
   forkIO $ parseThread chan
-  initNode <- fromInit initState (initMsg ^. body . payload) chan
-  go chan initNode
+  initOther <- fromInit initState (initMsg ^. body . payload) chan
+  go
+    chan
+    ( Node
+        { _nodeId = initMsg ^. body . payload . initNodeId,
+          _nodeIds = initMsg ^. body . payload . initNodeIds,
+          _nodeMsgId = 1,
+          _other = initOther
+        }
+    )
   where
     go chan node = do
       input <- readChan chan

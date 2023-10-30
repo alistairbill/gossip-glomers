@@ -3,18 +3,18 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 module Main where
 
-import Lib
+import Control.Concurrent (Chan)
 import Control.Lens hiding ((.=))
-import Control.Monad.State (gets, put, StateT)
+import Control.Monad.State (StateT, gets, put)
 import Data.Aeson
 import Data.Text (Text)
-import Control.Concurrent (Chan)
+import Lib
 
-data Payload = Echo Text | EchoOk Text deriving Show
+data Payload = Echo Text | EchoOk Text deriving (Show)
+
 instance FromJSON Payload where
   parseJSON = withObject "Echo" $ \o -> do
     t <- o .: "type"
@@ -29,17 +29,14 @@ instance ToJSON Payload where
         "echo" .= echo
       ]
 
-newtype EchoNode = EchoNode {
-  _eMsgId :: Int
-}
-makeLenses ''EchoNode
+data EchoNode = EchoNode
 
 fromInit :: () -> Init -> Chan (Event Payload ()) -> IO EchoNode
-fromInit _ _ _ = return $ EchoNode 1
+fromInit _ _ _ = pure EchoNode
 
-step :: Event Payload () -> StateT EchoNode IO ()
+step :: Event Payload () -> StateT (Node EchoNode) IO ()
 step (MessageEvent msg@(Message _ _ (Body _ _ (Echo e)))) = do
-  putMessage' eMsgId $ reply msg & body . payload .~ EchoOk e
+  putMessage' $ reply msg & body . payload .~ EchoOk e
 
 initState :: ()
 initState = ()

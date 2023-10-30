@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 module Main where
 
@@ -26,20 +25,17 @@ instance ToJSON Payload where
         "id" .= guid
       ]
 
-data UniqueNode = UniqueNode {
-  _uNodeId :: Text,
-  _uMsgId :: Int
-}
-makeLenses ''UniqueNode
+data UniqueNode = UniqueNode
 
 fromInit :: () -> Init -> Chan (Event Payload ()) -> IO UniqueNode
-fromInit _ init _ = return $ UniqueNode (init ^. nodeId) 1
+fromInit _ _ _ = pure UniqueNode
 
-step :: Event Payload () -> StateT UniqueNode IO ()
+step :: Event Payload () -> StateT (Node UniqueNode) IO ()
 step (MessageEvent msg@(Message _ _ (Body _ _ Generate))) = do
-  UniqueNode node i <- get
-  let guid = node <> "-" <> pack (show i)
-  putMessage' uMsgId $ reply msg & body . payload .~ GenerateOk guid
+  nodeId' <- use nodeId
+  nodeMsgId' <- use nodeMsgId
+  let guid = nodeId' <> "-" <> pack (show nodeMsgId')
+  putMessage' $ reply msg & body . payload .~ GenerateOk guid
 
 main :: IO ()
 main = loop fromInit step ()

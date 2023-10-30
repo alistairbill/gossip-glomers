@@ -33,9 +33,7 @@ instance ToJSON Payload where
   toJSON (Gossip seen) = object ["type" .= ("gossip" :: Text), "seen" .= seen]
 
 data BroadcastNode = BroadcastNode
-  { _bNodeId :: Text,
-    _bMsgId :: Int,
-    _messages :: S.Set Int,
+  { _messages :: S.Set Int,
     _known :: M.Map Text (S.Set Int),
     _neighbourhood :: [Text]
   }
@@ -47,16 +45,14 @@ gossipInterval = 200 * 1000 -- 200 ms
 
 fromInit :: () -> Init -> Chan (Event Payload InjectedPayload) -> IO BroadcastNode
 fromInit _ init chan =
-  let known' = M.fromList . map (,S.empty) $ init ^. nodeIds
+  let known' = M.fromList . map (,S.empty) $ init ^. initNodeIds
    in do
         forkIO . forever $ do
           threadDelay gossipInterval
           writeChan chan $ Injected IGossip
         return
           BroadcastNode
-            { _bNodeId = init ^. nodeId,
-              _bMsgId = 1,
-              _messages = S.empty,
+            { _messages = S.empty,
               _known = known',
               _neighbourhood = []
             }
@@ -70,13 +66,13 @@ gossipOverhead = 10 -- percent of values already known included in gossip messag
 extraNeighbours :: Int
 extraNeighbours = 40 -- percent of other nodes to include as extra neighbours
 
-step :: Event Payload InjectedPayload -> StateT BroadcastNode IO ()
+step :: Event Payload InjectedPayload -> StateT (Node BroadcastNode) IO ()
 step EOF = return ()
 step (Injected IGossip) = do
-  neighbours <- use neighbourhood
-  known' <- use known
-  id' <- use bNodeId
-  messages' <- use messages
+  nodeId' <- use nodeId
+  neighbours <- use (other . neighbourhood)
+  known' <- use (other . known)
+  messages' <- use (other . messages)
   forM_ neighbours $ \n -> do
     let knowntoN = known' M.! n
         (alreadyKnown, notifyOf) = S.partition (`S.member` knowntoN) messages'
@@ -85,7 +81,7 @@ step (Injected IGossip) = do
     let notifyOf' = notifyOf `S.union` extra
     putMessage
       Message
-        { _src = id',
+        { _src = nodeId',
           _dst = n,
           _body =
             Body
@@ -98,20 +94,20 @@ step (MessageEvent msg) =
   let res = reply msg
    in case res ^. body . payload of
         Gossip seen -> do
-          known %= M.adjust (S.union seen) (res ^. dst)
-          messages %= S.union seen
+          other . known %= M.adjust (S.union seen) (res ^. dst)
+          other . messages %= S.union seen
         Broadcast b -> do
-          messages %= S.insert b
-          putMessage' bMsgId $ res & body . payload .~ BroadcastOk
+          other . messages %= S.insert b
+          putMessage' $ res & body . payload .~ BroadcastOk
         Read -> do
-          messages' <- use messages
-          putMessage' bMsgId $ res & body . payload .~ ReadOk messages'
+          messages' <- use (other . messages)
+          putMessage' $ res & body . payload .~ ReadOk messages'
         Topology topology -> do
-          node <- use bNodeId
-          known' <- use known
+          nodeId' <- use nodeId
+          known' <- use (other . known)
           others <- liftIO $ randomSample ((extraNeighbours * M.size known') `div` 100) (M.keysSet known')
-          assign neighbourhood (S.toList $ S.fromList (topology M.! node) `S.union` others)
-          putMessage' bMsgId $ res & body . payload .~ TopologyOk
+          assign (other . neighbourhood) (S.toList $ S.fromList (topology M.! nodeId') `S.union` others)
+          putMessage' $ res & body . payload .~ TopologyOk
         BroadcastOk -> return ()
         ReadOk _ -> return ()
         TopologyOk -> return ()
