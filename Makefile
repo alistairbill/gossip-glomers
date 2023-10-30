@@ -24,5 +24,8 @@ broadcast-efficiency-bench: compile
 broadcast-efficiency-test: compile
 	$(maelstrom) test -w broadcast --bin $$(cabal list-bin broadcast) --node-count 25 --time-limit 20 --rate 100 --latency 100 --nemesis partition
 
+counter: compile
+	$(maelstrom) test -w g-counter --bin $$(cabal list-bin counter) --node-count 3 --rate 100 --time-limit 20 --nemesis partition
+
 web:
 	$(maelstrom) serve

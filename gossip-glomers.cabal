@@ -54,3 +54,17 @@ executable broadcast
         gossip-glomers
     hs-source-dirs: app/broadcast
     default-language: Haskell2010
+
+executable counter
+    main-is: Main.hs
+    build-depends:
+        base ^>=4.17.2.0,
+        aeson,
+        containers,
+        lens,
+        mtl,
+        random,
+        text,
+        gossip-glomers
+    hs-source-dirs: app/counter
+    default-language: Haskell2010
