@@ -27,5 +27,8 @@ broadcast-efficiency-test: compile
 counter: compile
 	$(maelstrom) test -w g-counter --bin $$(cabal list-bin counter) --node-count 3 --rate 100 --time-limit 20 --nemesis partition
 
+logs:
+	cat store/latest/node-logs/*
+
 web:
 	$(maelstrom) serve

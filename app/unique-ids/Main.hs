@@ -1,41 +1,27 @@
-{-# LANGUAGE OverloadedStrings #-}
-
-module Main where
-
-import Control.Concurrent (Chan)
-import Control.Lens hiding ((.=))
-import Control.Monad.State (MonadState (get, put), StateT)
+import Control.Lens
 import Data.Aeson
-import Data.Text (Text, pack)
-import Lib
+import Maelstrom
+import Maelstrom.Core
+import Data.Data (Data)
+import Data.Text.Display (display)
 
-data Payload = Generate | GenerateOk {guid :: Text} deriving (Show)
+data Generate = Generate
+  deriving stock (Generic, Data, Show)
+  deriving (FromJSON) via MessagePayload Generate
 
-instance FromJSON Payload where
-  parseJSON = withObject "Generate" $ \o -> do
-    t <- o .: "type"
-    case t of
-      String "generate" -> return Generate
-      _ -> fail "Unexpected value for key `type`"
+newtype GenerateOk = GenerateOk {id :: Text}
+  deriving stock (Generic, Data, Show)
+  deriving (ToJSON, FromJSON) via MessagePayload GenerateOk
 
-instance ToJSON Payload where
-  toJSON (GenerateOk guid) =
-    object
-      [ "type" .= ("generate_ok" :: Text),
-        "id" .= guid
-      ]
-
-data UniqueNode = UniqueNode
-
-fromInit :: () -> Init -> Chan (Event Payload ()) -> IO UniqueNode
-fromInit _ _ _ = pure UniqueNode
-
-step :: Event Payload () -> StateT (Node UniqueNode) IO ()
-step (MessageEvent msg@(Message _ _ (Body _ _ Generate))) = do
-  nodeId' <- use nodeId
-  nodeMsgId' <- use nodeMsgId
-  let guid = nodeId' <> "-" <> pack (show nodeMsgId')
-  putMessage' $ reply msg & body . payload .~ GenerateOk guid
+guid :: (MonadMaelstrom m) => m Text
+guid = do
+  nodeId <- use #nodeId
+  messageId <- use #messageId
+  pure $ display nodeId <> "-" <> display messageId
 
 main :: IO ()
-main = loop fromInit step ()
+main = do
+  manager <- handleInit
+  evaluatingStateT manager . forever $ do
+    msg <- receive @Generate
+    guid >>= reply msg . GenerateOk

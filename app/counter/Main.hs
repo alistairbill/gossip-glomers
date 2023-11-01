@@ -1,118 +1,121 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
-
-module Main where
-
-import Control.Concurrent (Chan, forkIO, threadDelay, writeChan)
-import Control.Lens hiding ((.=))
-import Control.Monad (forM_, when)
-import Control.Monad.State (MonadIO (liftIO), MonadState, StateT, forever, guard)
+import Control.Concurrent (forkIO, threadDelay)
+import Control.Lens hiding (Context)
 import Data.Aeson
-import qualified Data.Map as M
-import Data.Text (Text)
-import Debug.Trace (trace)
-import Lib
+import Data.Data (Data)
+import Data.Map qualified as M
+import Deriving.Aeson
+import Deriving.Aeson.Stock (Snake)
+import Maelstrom
+import Maelstrom.Core
+import Maelstrom.Union
+import StateRef (StateRefT, runStateRefT)
+import Prelude hiding (Read, on)
 
 data Versioned a = Versioned
-  { _version :: Int,
-    _value :: a
+  { version :: Int,
+    value :: a
   }
-  deriving (Show, Eq)
+  deriving (Generic, Data, Show, Eq)
+
+deriving via
+  Snake (Versioned a)
+  instance
+    (FromJSON a) => FromJSON (Versioned a)
+
+deriving via
+  Snake (Versioned a)
+  instance
+    (ToJSON a) => ToJSON (Versioned a)
 
 instance (Eq a) => Ord (Versioned a) where
   compare (Versioned v1 _) (Versioned v2 _) = compare v1 v2
 
-instance (FromJSON a) => FromJSON (Versioned a) where
-  parseJSON = withObject "VersionedValue" $ \o ->
-    Versioned <$> o .: "version" <*> o .: "value"
+newtype Add = Add
+  { delta :: Int
+  }
+  deriving stock (Generic, Data, Show)
+  deriving (ToJSON, FromJSON) via MessagePayload Add
 
-instance (ToJSON a) => ToJSON (Versioned a) where
-  toJSON (Versioned version value) = object ["version" .= version, "value" .= value]
+data AddOk = AddOk
+  deriving stock (Generic, Data, Show)
+  deriving (ToJSON, FromJSON) via MessagePayload AddOk
 
-data InjectedPayload = IGossip
+data Read = Read
+  deriving stock (Generic, Data, Show)
+  deriving (ToJSON, FromJSON) via MessagePayload Read
 
-data Payload
-  = Add Int
-  | AddOk
-  | Read
-  | ReadOk Int
-  | Gossip (M.Map Text (Versioned Int))
-  deriving (Show)
+newtype ReadOk = ReadOk
+  { value :: Int
+  }
+  deriving stock (Generic, Data, Show)
+  deriving (ToJSON, FromJSON) via MessagePayload ReadOk
 
-instance FromJSON Payload where
-  parseJSON = withObject "Counter" $ \o -> do
-    t <- o .: "type"
-    case t of
-      String "add" -> Add <$> o .: "delta"
-      String "read" -> pure Read
-      String "gossip" -> Gossip <$> o .: "values"
-      _ -> fail "Unexpected value for key `type`"
+newtype Gossip = Gossip
+  { values :: M.Map NodeId (Versioned Int)
+  }
+  deriving stock (Generic, Data, Show)
+  deriving (ToJSON, FromJSON) via MessagePayload Gossip
 
-instance ToJSON Payload where
-  toJSON AddOk = object ["type" .= ("add_ok" :: Text)]
-  toJSON (ReadOk value) =
-    object
-      [ "type" .= ("read_ok" :: Text),
-        "value" .= value
-      ]
-  toJSON (Gossip values) =
-    object
-      [ "type" .= ("gossip" :: Text),
-        "values" .= values
-      ]
+data GossipOk = GossipOk
+  deriving stock (Generic, Data, Show)
+  deriving (ToJSON, FromJSON) via MessagePayload GossipOk
 
-newtype CounterNode = CounterNode {_state :: M.Map Text (Versioned Int)}
+data Context = Context
+  { manager :: Manager,
+    values :: M.Map NodeId (Versioned Int)
+  }
+  deriving stock (Generic)
 
-makeLenses ''CounterNode
+type ContextM a = StateRefT Context IO a
+
+newContext :: Manager -> Context
+newContext manager = Context {manager, values = M.singleton (manager ^. #nodeId) (Versioned 0 0)}
 
 gossipInterval :: Int
 gossipInterval = 1000 * 1000 -- 1000 ms
 
-fromInit :: s -> Init -> Chan (Event Payload InjectedPayload) -> IO CounterNode
-fromInit _ init chan = do
-  forkIO . forever $ do
-    threadDelay gossipInterval
-    writeChan chan $ Injected IGossip
-  return . CounterNode $ M.singleton (init ^. initNodeId) (Versioned 0 0)
-
 increment :: Int -> Versioned Int -> Versioned Int
 increment delta (Versioned version value) = Versioned (version + 1) (value + delta)
 
-step :: Event Payload InjectedPayload -> StateT (Node CounterNode) IO ()
-step (Injected IGossip) = do
-  nodeId' <- use nodeId
-  nodeIds' <- use nodeIds
-  state' <- use (other . state)
-  forM_ nodeIds' $ \n -> do
-    when (n /= nodeId') $
-      putMessage
-        Message
-          { _src = nodeId',
-            _dst = n,
-            _body =
-              Body
-                { _msgId = Nothing,
-                  _inReplyTo = Nothing,
-                  _payload = Gossip state'
-                }
-          }
-step (MessageEvent msg) = do
-  let res = reply msg
-   in case res ^. body . payload of
-        Add delta -> do
-          nodeId' <- use nodeId
-          other . state %= M.adjust (increment delta) nodeId'
-          putMessage' $ res & body . payload .~ AddOk
-        Read -> do
-          state' <- use (other . state)
-          let val = M.foldr (\(Versioned _ value) acc -> acc + value) 0 state'
-          putMessage' $ res & body . payload .~ ReadOk val
-        Gossip values ->
-          other . state %= M.unionWith max values
+handleAdd :: Message 'Remote Add -> ContextM ()
+handleAdd msg@(Payload (Add delta)) = do
+  nodeId <- use (#manager . #nodeId)
+  #values %= M.adjust (increment delta) nodeId
+  zoom #manager $ reply msg AddOk
 
-initState :: ()
-initState = ()
+handleRead :: Message 'Remote Read -> ContextM ()
+handleRead msg@(Payload Read) = do
+  values <- use #values
+  let total = M.foldr (\(Versioned _ value) acc -> acc + value) 0 values
+  zoom #manager . reply msg $ ReadOk total
+
+handleGossip :: Message 'Remote Gossip -> ContextM ()
+handleGossip msg@(Payload (Gossip values)) = do
+  #values %= M.unionWith max values
+  zoom #manager $ reply msg GossipOk
+
+handler :: Message 'Remote (Union [Gossip, Read, Add]) -> ContextM ()
+handler =
+  case_
+    `on` handleAdd
+    `on` handleRead
+    `on` handleGossip
 
 main :: IO ()
-main = loop fromInit step initState
+main = do
+  manager <- handleInit
+  context <- newIORef (newContext manager)
+  let runContext = flip runStateRefT context
+  _ <- forkIO . runContext $ do
+    liftIO $ threadDelay gossipInterval
+    sendGossip
+  runContext . forever $ receive >>= handler
+
+sendGossip :: ContextM ()
+sendGossip = do
+  nodeId <- use (#manager . #nodeId)
+  nodeIds <- use (#manager . #nodeIds)
+  values <- use #values
+  forM_ nodeIds $ \n ->
+    when (n /= nodeId) $ do
+      zoom #manager $ send n (Gossip values)

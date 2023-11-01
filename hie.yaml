@@ -1,0 +1,14 @@
+cradle:
+  cabal:
+    - path: "./app/broadcast/Main.hs"
+      component: "exe:broadcast"
+    - path: "./app/counter/Main.hs"
+      component: "exe:counter"
+    - path: "./app/echo/Main.hs"
+      component: "exe:echo"
+    - path: "./app/unique-ids/Main.hs"
+      component: "exe:unique-ids"
+    - path: "./src"
+      component: "lib:gossip-glomers"
+    - path: "./test"
+      component: "test:spec"

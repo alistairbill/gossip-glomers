@@ -1,46 +1,24 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedLists #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-
-module Main where
-
-import Control.Concurrent (Chan)
-import Control.Lens hiding ((.=))
-import Control.Monad.State (StateT, gets, put)
+import Control.Lens
 import Data.Aeson
-import Data.Text (Text)
-import Lib
+import Data.Data (Data)
+import Maelstrom
+import Maelstrom.Core
 
-data Payload = Echo Text | EchoOk Text deriving (Show)
+newtype Echo = Echo {
+  echo :: Text
+}
+  deriving stock (Generic, Data, Show)
+  deriving (ToJSON, FromJSON) via MessagePayload Echo
 
-instance FromJSON Payload where
-  parseJSON = withObject "Echo" $ \o -> do
-    t <- o .: "type"
-    case t of
-      String "echo" -> Echo <$> o .: "echo"
-      _ -> fail "Unexpected value for key `type`"
-
-instance ToJSON Payload where
-  toJSON (EchoOk echo) =
-    object
-      [ "type" .= ("echo_ok" :: Text),
-        "echo" .= echo
-      ]
-
-data EchoNode = EchoNode
-
-fromInit :: () -> Init -> Chan (Event Payload ()) -> IO EchoNode
-fromInit _ _ _ = pure EchoNode
-
-step :: Event Payload () -> StateT (Node EchoNode) IO ()
-step (MessageEvent msg@(Message _ _ (Body _ _ (Echo e)))) = do
-  putMessage' $ reply msg & body . payload .~ EchoOk e
-
-initState :: ()
-initState = ()
+newtype EchoOk = EchoOk {
+  echo :: Text
+}
+  deriving stock (Generic, Data, Show)
+  deriving (ToJSON, FromJSON) via MessagePayload EchoOk
 
 main :: IO ()
 main = do
-  loop fromInit step initState
+  manager <- handleInit
+  evaluatingStateT manager . forever $ do
+    msg <- receive @Echo
+    reply msg $ EchoOk (msg ^. #body . #payload . #echo)
