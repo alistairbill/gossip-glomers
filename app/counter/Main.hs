@@ -56,10 +56,6 @@ newtype Gossip = Gossip
   deriving stock (Generic, Data, Show)
   deriving (ToJSON, FromJSON) via MessagePayload Gossip
 
-data GossipOk = GossipOk
-  deriving stock (Generic, Data, Show)
-  deriving (ToJSON, FromJSON) via MessagePayload GossipOk
-
 data Context = Context
   { manager :: Manager,
     values :: M.Map NodeId (Versioned Int)
@@ -67,9 +63,6 @@ data Context = Context
   deriving stock (Generic)
 
 type ContextM a = StateRefT Context IO a
-
-newContext :: Manager -> Context
-newContext manager = Context {manager, values = M.singleton (manager ^. #nodeId) (Versioned 0 0)}
 
 gossipInterval :: Int
 gossipInterval = 1000 * 1000 -- 1000 ms
@@ -90,9 +83,8 @@ handleRead msg@(Payload Read) = do
   zoom #manager . reply msg $ ReadOk total
 
 handleGossip :: Message 'Remote Gossip -> ContextM ()
-handleGossip msg@(Payload (Gossip values)) = do
+handleGossip (Payload (Gossip values)) = do
   #values %= M.unionWith max values
-  zoom #manager $ reply msg GossipOk
 
 handler :: Message 'Remote (Union [Gossip, Read, Add]) -> ContextM ()
 handler =
@@ -101,15 +93,14 @@ handler =
     `on` handleRead
     `on` handleGossip
 
-main :: IO ()
-main = do
-  manager <- handleInit
-  context <- newIORef (newContext manager)
-  let runContext = flip runStateRefT context
-  _ <- forkIO . runContext $ do
+newContext :: Manager -> IO (IORef Context)
+newContext manager = do
+  let context = Context {manager, values = M.singleton (manager ^. #nodeId) (Versioned 0 0)}
+  ref <- newIORef context
+  _ <- forkIO . flip runStateRefT ref . forever $ do
     liftIO $ threadDelay gossipInterval
     sendGossip
-  runContext . forever $ receive >>= handler
+  pure ref
 
 sendGossip :: ContextM ()
 sendGossip = do
@@ -119,3 +110,6 @@ sendGossip = do
   forM_ nodeIds $ \n ->
     when (n /= nodeId) $ do
       zoom #manager $ send n (Gossip values)
+
+main :: IO ()
+main = loop newContext handler

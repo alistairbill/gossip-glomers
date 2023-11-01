@@ -89,11 +89,6 @@ handler =
     `on` handleTopology
     `on` handleGossip
 
-newContext :: Manager -> Context
-newContext manager =
-  let known = M.fromList . map (,S.empty) $ manager ^. #nodeIds
-   in Context {messages = S.empty, known, neighbourhood = [], manager}
-
 randomSample :: (Ord a) => Int -> S.Set a -> IO (S.Set a)
 randomSample k s = S.fromList <$> replicateM k ((`S.elemAt` s) <$> randomRIO (0, S.size s - 1))
 
@@ -112,12 +107,15 @@ sendGossip = do
     extra <- liftIO $ randomSample k alreadyKnown
     zoom #manager . send n . Gossip $ notifyOf `S.union` extra
 
-main :: IO ()
-main = do
-  manager <- handleInit
-  context <- newIORef (newContext manager)
-  let runContext = flip runStateRefT context
-  _ <- forkIO . runContext . forever $ do
+newContext :: Manager -> IO (IORef Context)
+newContext manager = do
+  let known = M.fromList . map (,S.empty) $ manager ^. #nodeIds
+  let context = Context {messages = S.empty, known, neighbourhood = [], manager}
+  ref <- newIORef context
+  _ <- forkIO . flip runStateRefT ref . forever $ do
     liftIO $ threadDelay gossipInterval
     sendGossip
-  runContext . forever $ receive >>= handler
+  pure ref
+
+main :: IO ()
+main = loop newContext handler

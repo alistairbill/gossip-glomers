@@ -1,9 +1,9 @@
 import Control.Lens
 import Data.Aeson
-import Maelstrom
-import Maelstrom.Core
 import Data.Data (Data)
 import Data.Text.Display (display)
+import Maelstrom
+import Maelstrom.Core
 
 data Generate = Generate
   deriving stock (Generic, Data, Show)
@@ -19,9 +19,8 @@ guid = do
   messageId <- use #messageId
   pure $ display nodeId <> "-" <> display messageId
 
+handler :: (MonadState Manager m, MonadIO m) => Message 'Remote Generate -> m ()
+handler msg = guid >>= reply msg . GenerateOk
+
 main :: IO ()
-main = do
-  manager <- handleInit
-  evaluatingStateT manager . forever $ do
-    msg <- receive @Generate
-    guid >>= reply msg . GenerateOk
+main = loop newIORef handler

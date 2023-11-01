@@ -4,21 +4,20 @@ import Data.Data (Data)
 import Maelstrom
 import Maelstrom.Core
 
-newtype Echo = Echo {
-  echo :: Text
-}
+newtype Echo = Echo
+  { echo :: Text
+  }
   deriving stock (Generic, Data, Show)
   deriving (ToJSON, FromJSON) via MessagePayload Echo
 
-newtype EchoOk = EchoOk {
-  echo :: Text
-}
+newtype EchoOk = EchoOk
+  { echo :: Text
+  }
   deriving stock (Generic, Data, Show)
   deriving (ToJSON, FromJSON) via MessagePayload EchoOk
 
+handler :: (MonadState Manager m, MonadIO m) => Message 'Remote Echo -> m ()
+handler msg = reply msg $ EchoOk (msg ^. #body . #payload . #echo)
+
 main :: IO ()
-main = do
-  manager <- handleInit
-  evaluatingStateT manager . forever $ do
-    msg <- receive @Echo
-    reply msg $ EchoOk (msg ^. #body . #payload . #echo)
+main = loop newIORef handler

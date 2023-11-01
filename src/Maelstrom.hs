@@ -5,7 +5,7 @@
 
 module Maelstrom where
 
-import Control.Concurrent (Chan, forkIO, newChan, readChan, writeChan)
+import Control.Concurrent (forkIO, newChan, readChan, writeChan)
 import Control.Lens
 import Data.Aeson (FromJSON, ToJSON, eitherDecodeStrict, encode)
 import Data.ByteString.Char8 qualified as B
@@ -14,6 +14,7 @@ import Data.Data (Data)
 import Maelstrom.Core
 import Maelstrom.ErrorCode (ErrorCode)
 import UnliftIO.Exception (throwString)
+import StateRef
 
 receive :: forall a m. (HasCallStack, FromJSON a, MonadIO m) => m (Message Remote a)
 receive = do
@@ -30,9 +31,7 @@ send dest payload =
       }
 
 write :: (MonadMaelstrom m, ToJSON a) => Message Local a -> m ()
-write msg = do
-  chan <- use #chan
-  liftIO . writeChan chan . encode $ msg
+write = liftIO . BL.putStrLn . encode
 
 sendBody :: (ToJSON a, MonadMaelstrom m) => NodeId -> Body a -> m ()
 sendBody dest body = do
@@ -75,12 +74,9 @@ handleInit = do
   hSetBuffering stdin NoBuffering
   hSetBuffering stdout NoBuffering
   req <- receive @Init
-  chan <- newChan
-  _ <- forkIO . forever $ readChan chan >>= BL.putStrLn
   let manager =
         Manager
           { messageId = MessageId 0,
-            chan = chan,
             nodeId = req ^. #body . #payload . #nodeId,
             nodeIds = req ^. #body . #payload . #nodeIds
           }
@@ -96,10 +92,21 @@ data Error = Error
 
 data Manager = Manager
   { messageId :: MessageId,
-    chan :: Chan BL.ByteString,
     nodeId :: NodeId,
     nodeIds :: [NodeId]
   }
   deriving stock (Generic)
 
 type MonadMaelstrom m = (MonadState Manager m, MonadIO m)
+
+-- TODO: Use the concurrent-state library instead
+loop :: (FromJSON a) => (Manager -> IO (IORef ctx)) -> (Message Remote a -> StateRefT ctx IO ()) -> IO ()
+loop newContext handle = do
+  manager <- handleInit
+  context <- newContext manager
+  let runContext = flip runStateRefT context
+  chan <- newChan
+  _ <- forkIO . forever $ do
+    msg <- receive
+    writeChan chan msg
+  runContext . forever $ liftIO (readChan chan) >>= handle
