@@ -1,20 +1,125 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Maelstrom where
 
 import Control.Concurrent (forkIO, newChan, readChan, writeChan)
 import Control.Lens
-import Data.Aeson (FromJSON, ToJSON, eitherDecodeStrict, encode)
+import Data.Aeson
+import Data.Aeson.KeyMap as H
+import Data.Aeson.Types (Parser)
 import Data.ByteString.Char8 qualified as B
 import Data.ByteString.Lazy.Char8 qualified as BL
-import Data.Data (Data)
-import Maelstrom.Core
+import Data.Data (Data, dataTypeName, dataTypeOf, fromConstr, toConstr, tyconUQname)
+import Data.Generics.Labels ()
+import Data.Text.Display (Display)
+import Deriving.Aeson
+import Deriving.Aeson.Stock (Snake)
+import GHC.Generics (Rep)
 import Maelstrom.ErrorCode (ErrorCode)
-import UnliftIO.Exception (throwString)
 import StateRef
+import UnliftIO.Exception (throwString)
+
+data MessageOrigin = Local | Remote
+
+data Message o a = Message
+  { src :: NodeId,
+    dest :: NodeId,
+    body :: Body a
+  }
+  deriving stock (Generic, Show, Eq)
+
+deriving via
+  Snake (Message Local a)
+  instance
+    (ToJSON a) => ToJSON (Message Local a)
+
+deriving via
+  Snake (Message Remote a)
+  instance
+    (FromJSON a) => FromJSON (Message Remote a)
+
+type OmitSnake = CustomJSON '[FieldLabelModifier CamelToSnake, OmitNothingFields]
+
+data Address = Address
+  { msgId :: Maybe MessageId,
+    inReplyTo :: Maybe MessageId
+  }
+  deriving stock (Generic, Show, Eq)
+  deriving (ToJSON, FromJSON) via OmitSnake Address
+
+data Body a = Body
+  { address :: Address,
+    payload :: a
+  }
+  deriving stock (Generic, Show, Eq)
+
+instance (ToJSON a) => ToJSON (Body a) where
+  toJSON (Body address payload) = case (toJSON address, toJSON payload) of
+    (Object addressMap, Object payloadMap) -> Object $ H.union addressMap payloadMap
+    (_, _) -> error "unreachable"
+
+instance (FromJSON a) => FromJSON (Body a) where
+  parseJSON = withObject "Body" $ \o -> do
+    address <- parseJSON @Address (Object o)
+    case toJSON address of
+      Object adr -> do
+        let o' = H.difference o adr
+        payload <- parseJSON @a (Object o')
+        pure $ Body address payload
+      _ -> error "unreachable"
+
+newtype MessagePayload a = MessagePayload a
+  deriving stock (Generic, Data, Show)
+
+messageType :: forall a s. (Data a, IsString s) => Proxy a -> s
+messageType _ =
+  dataTypeOf @a (error "unreachable")
+    & dataTypeName
+    & tyconUQname
+    & getStringModifier @CamelToSnake
+    & fromString
+
+instance (Generic a, Data a, GToJSON Zero (Rep a), GToEncoding Zero (Rep a)) => ToJSON (MessagePayload a) where
+  toJSON :: MessagePayload a -> Value
+  toJSON (MessagePayload x) =
+    case toJSON @(Snake a) (CustomJSON x) of
+      Object keyMap -> Object $ H.union typeMap keyMap
+      _ -> Object typeMap
+    where
+      typeMap = H.singleton "type" (messageType (Proxy @a))
+
+instance
+  ( Generic a,
+    Data a,
+    GFromJSON Zero (Rep a)
+  ) =>
+  FromJSON (MessagePayload a)
+  where
+  parseJSON :: Value -> Parser (MessagePayload a)
+  parseJSON v =
+    MessagePayload <$> do
+      let expected = messageType (Proxy @a)
+      v & withObject expected \o -> do
+        actual <- o .: "type"
+        when (expected /= actual) do
+          fail $ "Expected `" <> expected <> "`, got `" <> actual <> "`"
+        let v' = H.delete "type" o
+        if H.null v'
+          then pure . fromConstr $ toConstr (error "unreachable" :: a)
+          else parseJSON @(Snake a) (Object v') <&> \case CustomJSON x -> x
+
+newtype NodeId = NodeId Text
+  deriving stock (Data, Show, Eq, Ord)
+  deriving newtype (Display, ToJSON, ToJSONKey, FromJSON, FromJSONKey, Hashable)
+
+newtype MessageId = MessageId Word
+  deriving stock (Data, Show, Eq)
+  deriving newtype (Display, ToJSON, FromJSON)
+
+pattern Payload :: a -> Message o a
+pattern Payload p <- Message _ _ (Body _ p)
+
+{-# COMPLETE Payload :: Message #-}
 
 receive :: forall a m. (HasCallStack, FromJSON a, MonadIO m) => m (Message Remote a)
 receive = do

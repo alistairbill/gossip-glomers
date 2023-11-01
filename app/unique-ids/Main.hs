@@ -3,7 +3,6 @@ import Data.Aeson
 import Data.Data (Data)
 import Data.Text.Display (display)
 import Maelstrom
-import Maelstrom.Core
 
 data Generate = Generate
   deriving stock (Generic, Data, Show)

@@ -6,7 +6,6 @@ import Data.Map qualified as M
 import Deriving.Aeson
 import Deriving.Aeson.Stock (Snake)
 import Maelstrom
-import Maelstrom.Core
 import Maelstrom.Union
 import StateRef (StateRefT, runStateRefT)
 import Prelude hiding (Read, on)

@@ -5,7 +5,6 @@ import Data.Data (Data)
 import Data.Map qualified as M
 import Data.Set qualified as S
 import Maelstrom
-import Maelstrom.Core
 import Maelstrom.Union
 import StateRef (StateRefT, runStateRefT)
 import System.Random (randomRIO)

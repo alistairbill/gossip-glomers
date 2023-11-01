@@ -2,7 +2,7 @@
 
 import Data.Aeson
 import Data.Data (Data)
-import Maelstrom.Core
+import Maelstrom
 import Test.Hspec
 
 newtype WithField = WithField

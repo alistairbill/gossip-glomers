@@ -54,8 +54,7 @@ library
       mtl,
       text-display,
       unliftio
-  exposed-modules: StateRef, Maelstrom, Maelstrom.ErrorCode, Maelstrom.Union, Maelstrom.Core
-  -- other-modules: Maelstrom.Core
+  exposed-modules: StateRef, Maelstrom, Maelstrom.ErrorCode, Maelstrom.Union
 
 executable echo
   import: common, executable

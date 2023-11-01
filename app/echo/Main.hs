@@ -2,7 +2,6 @@ import Control.Lens
 import Data.Aeson
 import Data.Data (Data)
 import Maelstrom
-import Maelstrom.Core
 
 newtype Echo = Echo
   { echo :: Text
