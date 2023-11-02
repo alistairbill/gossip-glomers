@@ -6,6 +6,8 @@ cradle:
       component: "exe:counter"
     - path: "./app/echo/Main.hs"
       component: "exe:echo"
+    - path: "./app/kafka/Main.hs"
+      component: "exe:kafka"
     - path: "./app/unique-ids/Main.hs"
       component: "exe:unique-ids"
     - path: "./src"

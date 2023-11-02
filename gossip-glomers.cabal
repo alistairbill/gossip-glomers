@@ -105,6 +105,18 @@ executable counter
       gossip-glomers
   hs-source-dirs: app/counter
 
+executable kafka
+  import: common, executable
+  main-is: Main.hs
+  build-depends:
+      aeson,
+      containers,
+      mtl,
+      generic-lens,
+      lens,
+      gossip-glomers
+  hs-source-dirs: app/kafka
+
 test-suite spec
   import: common
   type: exitcode-stdio-1.0
